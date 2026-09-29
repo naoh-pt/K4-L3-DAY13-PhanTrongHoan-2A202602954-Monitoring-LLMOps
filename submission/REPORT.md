@@ -8,7 +8,7 @@
 - **MSSV:** 2A202602954
 - **Lớp:** K4-L3A
 - **Repository URL:** https://github.com/naoh-pt/K4-L3-DAY13-PhanTrongHoan-2A202602954-Monitoring-LLMOps
-- **Commit SHA cuối:**
+- **Commit SHA cuối:** `7650282` (CP3 / CP4)
 - **Challenge ID:** `day13-k4-l3a-monitoring-llmops-v1`
 - **Tên project Langfuse cá nhân:** `day13-k4-l3a-2A202602954`
 
