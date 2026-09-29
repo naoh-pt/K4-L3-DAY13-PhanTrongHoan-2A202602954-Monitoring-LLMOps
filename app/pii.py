@@ -19,6 +19,9 @@ def scrub_text(text: str) -> str:
     return safe
 
 
+redact_pii = scrub_text
+
+
 def summarize_text(text: str, max_len: int = 80) -> str:
     safe = scrub_text(text).strip().replace("\n", " ")
     return safe[:max_len] + ("..." if len(safe) > max_len else "")

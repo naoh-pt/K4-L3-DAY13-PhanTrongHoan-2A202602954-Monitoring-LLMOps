@@ -37,7 +37,7 @@
 
 | Nội dung | Baseline | Kết quả cuối | Nhận xét |
 |---|---|---|---|
-| `validate_logs.py` | 30/100 (3 FAILED, 1 PASSED) | | Chưa có correlation_id, log enrichment; validator log chưa đạt là bình thường trước CP1 |
+| `validate_logs.py` | 30/100 (3 FAILED, 1 PASSED) | 100/100 | Đạt toàn bộ sau CP1 (0 thiếu trường, 10 unique correlation IDs, 100% enriched, 0 PII leak) |
 | `validate_dashboard.py` | 6/6 panel hợp lệ | | Dashboard contract đạt cấu hình chuẩn |
 | `pytest` | 22 passed | | Toàn bộ unit/contract tests ban đầu đều pass |
 | Số traces hợp lệ | 0 | | Mới chỉ có root span, thiếu child observations (retrieval/generation) và correlation_id là MISSING |
@@ -48,9 +48,24 @@
 ## 4. Logging và PII
 
 - **Cách tạo/nhận và truyền correlation ID:**
+  - `CorrelationIdMiddleware` ([app/middleware.py](file:///e:/AIinActoin/K4-L3-DAY13-PhanTrongHoan-2A202602954-Monitoring-LLMOps/app/middleware.py)) trước tiên gọi `clear_contextvars()` để xóa sạch ngữ cảnh của request trước, chống rò rỉ dữ liệu giữa các luồng.
+  - Trích xuất header `x-request-id` từ request đến; nếu không có hoặc rỗng sẽ sinh mới theo format chuẩn `req-<8-hex>` thông qua `f"req-{uuid.uuid4().hex[:8]}"`.
+  - Gọi `bind_contextvars(correlation_id=correlation_id)` của `structlog` để mọi log trong request tự động gắn ID này. Đồng thời lưu vào `request.state.correlation_id` để chuyển tiếp xuống `agent.run()`, trace metadata và trả về qua response header `x-request-id`, `x-response-time-ms` cũng như response body JSON.
 - **Các metadata được ghi vào structured log:**
+  - Định dạng JSON theo chuẩn ISO-8601 timestamp (`ts`), cấp độ (`level`: info/error/warning), dịch vụ (`service`: api/control), sự kiện (`event`: `request_received`, `response_sent`, `request_failed`).
+  - Metadata ngữ cảnh request: `correlation_id`, `env` (môi trường), `user_id_hash` (băm SHA-256 12 ký tự), `session_id`, `feature` (`qa`/`summary`), `model` (`claude-sonnet-4-5`).
+  - Metadata hiệu năng và kết quả: `latency_ms`, `ttft_ms`, `tokens_in`, `tokens_out`, `cost_usd`, `quality_score`, `tool_name`, `tool_success`, và `payload` (chứa preview rút gọn đã lọc PII).
 - **Cách bảo đảm PII được scrub trước khi ghi:**
+  - Hoàn thiện regex trong [app/pii.py](file:///e:/AIinActoin/K4-L3-DAY13-PhanTrongHoan-2A202602954-Monitoring-LLMOps/app/pii.py) cho 4 nhóm thông tin: Email (`[\w\.-]+@[\w\.-]+\.\w+`), Số điện thoại VN (`(?<!\d)(?:\+84|0)(?:[ .-]?\d){9}(?!\d)`), CCCD (`\b\d{12}\b`), và Thẻ thanh toán (`\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b`).
+  - Đăng ký processor `scrub_event` trong chuỗi pipeline `structlog.configure` của [app/logging_config.py](file:///e:/AIinActoin/K4-L3-DAY13-PhanTrongHoan-2A202602954-Monitoring-LLMOps/app/logging_config.py) ngay trước `JsonlFileProcessor` và `JSONRenderer`. Processor này quét đệ quy mọi trường chuỗi/dict/list trong `event_dict` để thay thế thông tin nhạy cảm bằng `[REDACTED_...]` trước khi dữ liệu được ghi vào file `data/logs.jsonl`.
 - **Cách kiểm chứng kết quả:**
+  - Chạy `python scripts/load_test.py` với 10 queries thực tế chứa PII thô (email, số điện thoại, thẻ tín dụng).
+  - Chạy `python scripts/validate_logs.py` đạt điểm tuyệt đối **100/100**:
+    + Basic JSON schema: **PASSED** (0 record thiếu trường bắt buộc).
+    + Correlation ID propagation: **PASSED** (10/10 unique correlation IDs).
+    + Log enrichment: **PASSED** (100% records có đủ user_id_hash, session_id, feature, model, env).
+    + PII scrubbing: **PASSED** (0 PII leaks).
+  - Chạy `python -m pytest -q` đạt **24/24 passed** (đã bổ sung đầy đủ unit tests cho CCCD và Thẻ thanh toán trong `tests/test_pii.py`).
 
 ## 5. Tracing và prompt versioning
 
