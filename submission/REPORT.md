@@ -4,13 +4,13 @@
 
 ## 1. Thông tin học viên
 
-- **Họ và tên:**
-- **MSSV:**
+- **Họ và tên:** Phan Trọng Hoàn
+- **MSSV:** 2A202602954
 - **Lớp:** K4-L3A
-- **Repository URL:**
+- **Repository URL:** https://github.com/naoh-pt/K4-L3-DAY13-PhanTrongHoan-2A202602954-Monitoring-LLMOps
 - **Commit SHA cuối:**
 - **Challenge ID:**
-- **Tên project Langfuse cá nhân:** `day13-k4-l3a-<MSSV>`
+- **Tên project Langfuse cá nhân:** `day13-k4-l3a-2A202602954`
 
 ## 2. Evidence index
 
@@ -37,13 +37,13 @@
 
 | Nội dung | Baseline | Kết quả cuối | Nhận xét |
 |---|---|---|---|
-| `validate_logs.py` | | | |
-| `validate_dashboard.py` | | | |
-| `pytest` | | | |
-| Số traces hợp lệ | | | |
-| Số PII leak | | | |
-| Latency P95 / TTFT P95 | | | |
-| Retrieval success rate | | | |
+| `validate_logs.py` | 30/100 (3 FAILED, 1 PASSED) | | Chưa có correlation_id, log enrichment; validator log chưa đạt là bình thường trước CP1 |
+| `validate_dashboard.py` | 6/6 panel hợp lệ | | Dashboard contract đạt cấu hình chuẩn |
+| `pytest` | 22 passed | | Toàn bộ unit/contract tests ban đầu đều pass |
+| Số traces hợp lệ | 0 | | Mới chỉ có root span, thiếu child observations (retrieval/generation) và correlation_id là MISSING |
+| Số PII leak | 0 | | Chưa phát hiện leak thô từ sample queries, nhưng PII scrubber chưa được gắn vào logging pipeline |
+| Latency P95 / TTFT P95 | 5442.0 ms / 50.0 ms | | Chịu ảnh hưởng cold-start ở request đầu tiên trong load test |
+| Retrieval success rate | 100% (10/10) | | 100% request retrieval thành công ở trạng thái baseline |
 
 ## 4. Logging và PII
 
