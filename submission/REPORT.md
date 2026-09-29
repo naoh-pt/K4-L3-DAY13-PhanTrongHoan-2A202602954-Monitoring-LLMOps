@@ -9,7 +9,7 @@
 - **Lớp:** K4-L3A
 - **Repository URL:** https://github.com/naoh-pt/K4-L3-DAY13-PhanTrongHoan-2A202602954-Monitoring-LLMOps
 - **Commit SHA cuối:**
-- **Challenge ID:**
+- **Challenge ID:** `day13-k4-l3a-monitoring-llmops-v1`
 - **Tên project Langfuse cá nhân:** `day13-k4-l3a-2A202602954`
 
 ## 2. Evidence index
@@ -115,31 +115,64 @@
 
 ## 7. Điều tra challenge
 
-- **Challenge ID:**
-- **Khoảng thời gian điều tra:**
+- **Challenge ID:** `day13-k4-l3a-monitoring-llmops-v1` (Cohort: K4, Seed: 1311, Incident: `rag_slow`, Affected Feature: `monitoring`, Latency Threshold: 2000ms)
+- **Khoảng thời gian điều tra:** `2026-09-29T10:12:31Z` đến `2026-09-29T10:13:17Z`
 - **Triệu chứng từ metrics:**
+  - P95 latency của hệ thống tăng vọt từ mức bình thường ~165ms lên tới **2,656ms** (thời gian xử lý nội bộ server) và **10,684ms – 13,357ms** (đo từ phía client khi chạy đồng thời với concurrency = 5).
+  - Vi phạm nghiêm trọng ngưỡng độ trễ challenge quy định (`latency_threshold_ms: 2000`) và mục tiêu SLO (`3000ms`).
+  - Trong khi đó, tỷ lệ lỗi vẫn giữ 0% (error rate = 0%) và điểm chất lượng vẫn đạt ~0.80–0.90, chứng tỏ hệ thống không bị crash mà bị nghẽn hiệu năng nghiêm trọng cục bộ trên tính năng `monitoring`.
 - **Log line và correlation ID liên quan:**
+  - Correlation ID đại diện được chọn để đối chiếu xuyên suốt: `req-2e4afe66` (User hash: `ed72e61117f6`, Session: `k4-l3a-challenge-s05`, Feature: `monitoring`).
+  - Request nhận lúc: `2026-09-29T10:12:31.747947Z`
+  - Response gửi lúc: `2026-09-29T10:12:34.407737Z` (latency: 2656ms)
+  - Log line trích xuất từ `data/logs.jsonl`:
+    ```json
+    {"service": "api", "latency_ms": 2656, "ttft_ms": 50, "tokens_in": 35, "tokens_out": 97, "cost_usd": 0.00156, "quality_score": 0.8, "tool_name": "retrieval", "tool_success": true, "payload": {"answer_preview": "Starter answer. You should improve this output logic and add better..."}, "event": "response_sent", "env": "dev", "correlation_id": "req-2e4afe66", "session_id": "k4-l3a-challenge-s05", "user_id_hash": "ed72e61117f6", "model": "claude-sonnet-4-5", "feature": "monitoring", "level": "info", "ts": "2026-09-29T10:12:34.407737Z"}
+    ```
 - **Trace ID và span gây ảnh hưởng:**
+  - Trace ID tương ứng trên Langfuse Cloud: `bd91df34703408c8eee4a58dd33295c1` (chứa metadata `correlation_id: req-2e4afe66`).
+  - Phân rã thời gian thực thi của các span (Span timing breakdown):
+    + Root span `lab-agent-run`: **2.656s** (100% thời gian agent)
+    + Child span `retrieval`: **2.501s** (chiếm tới **94.2%** tổng thời gian thực thi của trace!)
+    + Child span `llm-generation`: **0.152s** (chỉ chiếm 5.7%, tốc độ sinh token của LLM hoàn toàn bình thường)
+  - Span gây chậm trực tiếp chính là child span `retrieval` (bước tra cứu RAG vector/tài liệu).
 - **Root cause:**
+  - Sự cố mô phỏng `rag_slow` đã can thiệp vào tầng tri thức/retriever, gây ra độ trễ nhân tạo 2.5 giây cho mỗi lần gọi hàm `retrieve()` đối với feature `monitoring`. Khi có tải đồng thời (5 concurrent requests), hàng đợi xử lý bị dồn ứ khiến độ trễ tổng thể từ phía client tăng vọt lên hơn 13 giây.
 - **Fix action:**
+  - Vô hiệu hóa ngay sự cố bằng lệnh `python scripts/inject_incident.py --disable` (gọi endpoint `POST /incidents/rag_slow/disable`), hệ thống phục hồi latency về mức bình thường ~165ms.
+  - Trong môi trường production thực tế: Tối ưu chỉ mục vector (HNSW index), mở rộng connection pool tới cơ sở dữ liệu vector/tri thức, áp dụng semantic caching cho các truy vấn tra cứu lặp lại.
 - **Preventive measure:**
+  - Cấu hình hard timeout cho retrieval span (ví dụ `timeout=1500ms`) với cơ chế fallback trả về tài liệu tĩnh hoặc thông báo tra cứu suy giảm thay vì để request bị block vô thời hạn.
+  - Thiết lập alert `high_tail_latency` (P95 > 3000ms trong 5m) và `retrieval_failure_rate` (< 90%) gửi trực tiếp về kênh trực ban Slack `#alerts-llmops-l3a` kèm theo runbook xử lý sự cố tại [docs/alerts.md](file:///e:/AIinActoin/K4-L3-DAY13-PhanTrongHoan-2A202602954-Monitoring-LLMOps/docs/alerts.md).
 
 ## 8. Giải thích và tự đánh giá
 
 - **Một quyết định kỹ thuật quan trọng và lý do:**
+  - Thiết kế kiến trúc quan sát phân cấp (hierarchical tracing) tương thích chuẩn Langfuse v4 và OpenTelemetry: sử dụng context manager `start_observation` kết hợp với `propagate_attributes`.
+  - Lý do: Tách biệt rõ ràng giữa bước `retrieval` (type `RETRIEVER`) và bước `llm-generation` (type `GENERATION`). Nhờ đó, khi có sự cố hiệu năng, ta lập tức cô lập được thời gian nghẽn xảy ra ở tầng cơ sở dữ liệu/RAG hay ở tầng gọi mô hình LLM mà không phải phỏng đoán.
 - **Một lỗi/blocker đã gặp:**
+  - Khi bắt đầu CP2, quá trình gửi trace và fetch prompt gặp lỗi xác thực 401 do cấu hình nhầm `LANGFUSE_BASE_URL` trỏ về máy chủ US (`https://us.cloud.langfuse.com`) trong khi tài khoản và project được tạo trên máy chủ EU (`https://cloud.langfuse.com`).
 - **Cách tìm nguyên nhân và xử lý:**
+  - Kiểm tra log chi tiết từ API response và mã lỗi HTTP 401, đối chiếu URL trong dashboard Langfuse trên trình duyệt và nhận thấy prefix tổ chức nằm trên cụm EU. Xử lý bằng cách cập nhật biến môi trường `LANGFUSE_BASE_URL=https://cloud.langfuse.com` trong file `.env`, tạo lại API key hợp lệ và khởi động lại uvicorn server.
 - **Cách hiểu luồng Metrics → Logs → Traces:**
+  - **Metrics** là tín hiệu phát hiện đầu tiên (*Symptom Detection*): cho biết *hệ thống có đang gặp vấn đề không, vấn đề gì (latency/error), và bắt đầu từ thời điểm nào*.
+  - **Logs** là công cụ lọc và khoanh vùng (*Event Correlation*): dựa vào timestamp và triệu chứng từ metrics, ta tra cứu các dòng log bất thường, xác định `user_id_hash`, `session_id`, `feature`, và đặc biệt là lấy được mã định danh duy nhất `correlation_id` (`req-...`).
+  - **Traces** là công cụ chẩn đoán sâu và xác định nguyên nhân gốc rễ (*Root Cause Diagnosis*): dùng `correlation_id` để mở cây thác trace (waterfall tree), xem chi tiết thời gian và trạng thái của từng span con (`retrieval`, `generation`) để chỉ ra đích xác hàm hay dịch vụ bên dưới đang là điểm nghẽn.
 - **Vai trò của prompt version, token/cost, SLO hoặc rollback trong vận hành LLM:**
+  - **Prompt version & rollback**: Prompt là thành phần thường xuyên thay đổi nhất trong ứng dụng GenAI. Việc quản lý phiên bản (v1, v2) và gán nhãn môi trường (`production`, `candidate`) cho phép A/B testing an toàn và thu hồi ngay lập tức (zero-downtime rollback) khi prompt mới gây hallucination hoặc suy giảm chất lượng mà không cần sửa mã nguồn hay build lại container.
+  - **Token & cost**: Giúp kiểm soát chi phí API theo thời gian thực, phát hiện rò rỉ token (ví dụ prompt quá dài hoặc vòng lặp vô tận) trước khi ngân sách bị cạn kiệt.
+  - **SLO & error budget**: Đặt ra ranh giới định lượng giữa tốc độ phát triển tính năng và độ ổn định hệ thống. Khi error budget bị cạn, đội ngũ kỹ thuật buộc phải dừng deploy để khắc phục nợ kỹ thuật.
 - **Điều quan trọng nhất đã học:**
+  - Khắc sâu tư duy quan sát toàn diện (*Observability-driven engineering*) cho hệ thống AI: không chỉ log input/output đơn thuần mà phải bọc lót bảo vệ dữ liệu nhạy cảm (PII redaction), gắn kết ngữ cảnh xuyên suốt bằng correlation ID, và phân tách chi tiết từng giai đoạn thực thi trong pipeline LLM.
 - **Hạn chế hoặc phần chưa hoàn thành, nếu có:**
+  - Cơ chế retry khi gọi API vector DB / LLM hiện tại vẫn là logic cơ bản, có thể nâng cấp thêm exponential backoff và circuit breaker để tự động ngắt tải khi downstream service bị nghẽn kéo dài.
 
 ## 9. Checklist trước khi nộp
 
-- [ ] Kết quả và evidence thuộc commit SHA cuối.
-- [ ] Tất cả ảnh/output mở được bằng đường dẫn tương đối.
-- [ ] Incident evidence nối đúng metric → log → trace.
-- [ ] Trace/prompt evidence thuộc project Langfuse cá nhân và ảnh không lộ key/secret.
-- [ ] Repository chạy lại được theo README.
-- [ ] Không có secret, API key, PII thô hoặc evidence của người khác/lớp khác.
-- [ ] URL repo và commit SHA cuối đã được nộp trên LMS/Codelabs.
+- [x] Kết quả và evidence thuộc commit SHA cuối.
+- [x] Tất cả ảnh/output mở được bằng đường dẫn tương đối.
+- [x] Incident evidence nối đúng metric → log → trace.
+- [x] Trace/prompt evidence thuộc project Langfuse cá nhân và ảnh không lộ key/secret.
+- [x] Repository chạy lại được theo README.
+- [x] Không có secret, API key, PII thô hoặc evidence của người khác/lớp khác.
+- [x] URL repo và commit SHA cuối đã được nộp trên LMS/Codelabs.
