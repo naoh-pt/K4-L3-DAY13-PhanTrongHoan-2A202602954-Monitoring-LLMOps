@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 
 from . import metrics
@@ -51,7 +52,29 @@ class LabAgent:
             },
         ):
             started = time.perf_counter()
-            docs = retrieve(message)
+
+            # Child observation 1: Retrieval
+            if hasattr(langfuse_client, "start_as_current_observation"):
+                retrieval_ctx = langfuse_client.start_as_current_observation(
+                    name="retrieval",
+                    as_type="retriever",
+                    metadata={
+                        "query_preview": summarize_text(message),
+                    },
+                )
+            else:
+                retrieval_ctx = nullcontext()
+
+            with retrieval_ctx as ret_obs:
+                docs = retrieve(message)
+                if ret_obs is not None and hasattr(ret_obs, "update"):
+                    ret_obs.update(
+                        metadata={
+                            "doc_count": len(docs),
+                            "query_preview": summarize_text(message),
+                        }
+                    )
+
             prompt = resolve_prompt(
                 langfuse_client,
                 feature=feature,
@@ -71,13 +94,51 @@ class LabAgent:
                 },
                 version=prompt.version,
             )
-            # TODO (CP2): instrument retrieve() and FakeLLM.generate() as child
-            # observations. The nested generation must receive prompt, usage and cost.
+
+            # Child observation 2: LLM Generation
             with propagate_attributes(prompt=prompt.managed_prompt):
-                response = self.llm.generate(prompt.text)
+                if hasattr(langfuse_client, "start_as_current_observation"):
+                    gen_ctx = langfuse_client.start_as_current_observation(
+                        name="llm-generation",
+                        as_type="generation",
+                        model=self.model,
+                        prompt=prompt.managed_prompt,
+                        metadata={
+                            "feature": feature,
+                            "prompt_name": prompt.name,
+                            "prompt_label": prompt.label,
+                            "prompt_version": prompt.version,
+                        },
+                    )
+                else:
+                    gen_ctx = nullcontext()
+
+                with gen_ctx as gen_obs:
+                    response = self.llm.generate(prompt.text)
+                    cost_usd = self._estimate_cost(response.usage.input_tokens, response.usage.output_tokens)
+                    update_kwargs = {
+                        "model": self.model,
+                        "prompt": prompt.managed_prompt,
+                        "usage_details": {
+                            "input": response.usage.input_tokens,
+                            "output": response.usage.output_tokens,
+                            "total": response.usage.input_tokens + response.usage.output_tokens,
+                        },
+                        "cost_details": {
+                            "total": cost_usd,
+                        },
+                        "metadata": {
+                            "ttft_ms": response.ttft_ms,
+                            "feature": feature,
+                        },
+                    }
+                    if gen_obs is not None and hasattr(gen_obs, "update"):
+                        gen_obs.update(**update_kwargs)
+                    if hasattr(langfuse_client, "update_current_generation"):
+                        langfuse_client.update_current_generation(**update_kwargs)
+
             quality_score = self._heuristic_quality(message, response.text, docs)
             latency_ms = int((time.perf_counter() - started) * 1000)
-            cost_usd = self._estimate_cost(response.usage.input_tokens, response.usage.output_tokens)
 
         metrics.record_request(
             latency_ms=latency_ms,
