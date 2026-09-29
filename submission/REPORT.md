@@ -8,7 +8,7 @@
 - **MSSV:** 2A202602954
 - **Lớp:** K4-L3A
 - **Repository URL:** https://github.com/naoh-pt/K4-L3-DAY13-PhanTrongHoan-2A202602954-Monitoring-LLMOps
-- **Commit SHA cuối:** `7650282` (CP3 / CP4)
+- **Commit SHA cuối:** `8be59da`
 - **Challenge ID:** `day13-k4-l3a-monitoring-llmops-v1`
 - **Tên project Langfuse cá nhân:** `day13-k4-l3a-2A202602954`
 
@@ -122,19 +122,19 @@
   - Vi phạm nghiêm trọng ngưỡng độ trễ challenge quy định (`latency_threshold_ms: 2000`) và mục tiêu SLO (`3000ms`).
   - Trong khi đó, tỷ lệ lỗi vẫn giữ 0% (error rate = 0%) và điểm chất lượng vẫn đạt ~0.80–0.90, chứng tỏ hệ thống không bị crash mà bị nghẽn hiệu năng nghiêm trọng cục bộ trên tính năng `monitoring`.
 - **Log line và correlation ID liên quan:**
-  - Correlation ID đại diện được chọn để đối chiếu xuyên suốt: `req-2e4afe66` (User hash: `ed72e61117f6`, Session: `k4-l3a-challenge-s05`, Feature: `monitoring`).
-  - Request nhận lúc: `2026-09-29T10:12:31.747947Z`
-  - Response gửi lúc: `2026-09-29T10:12:34.407737Z` (latency: 2656ms)
+  - Correlation ID đại diện được chọn để đối chiếu xuyên suốt: `req-f49a0b74` (User hash: `4570299f37e2`, Session: `k4-l3a-challenge-s04`, Feature: `monitoring`).
+  - Request nhận lúc: `2026-09-29T10:12:42.410132Z`
+  - Response gửi lúc: `2026-09-29T10:12:45.067789Z` (latency: 2655ms)
   - Log line trích xuất từ `data/logs.jsonl`:
     ```json
-    {"service": "api", "latency_ms": 2656, "ttft_ms": 50, "tokens_in": 35, "tokens_out": 97, "cost_usd": 0.00156, "quality_score": 0.8, "tool_name": "retrieval", "tool_success": true, "payload": {"answer_preview": "Starter answer. You should improve this output logic and add better..."}, "event": "response_sent", "env": "dev", "correlation_id": "req-2e4afe66", "session_id": "k4-l3a-challenge-s05", "user_id_hash": "ed72e61117f6", "model": "claude-sonnet-4-5", "feature": "monitoring", "level": "info", "ts": "2026-09-29T10:12:34.407737Z"}
+    {"service": "api", "latency_ms": 2655, "ttft_ms": 50, "tokens_in": 36, "tokens_out": 110, "cost_usd": 0.001758, "quality_score": 0.9, "tool_name": "retrieval", "tool_success": true, "payload": {"answer_preview": "Starter answer. You should improve this output logic and add better quality chec..."}, "event": "response_sent", "env": "dev", "correlation_id": "req-f49a0b74", "session_id": "k4-l3a-challenge-s04", "user_id_hash": "4570299f37e2", "model": "claude-sonnet-4-5", "feature": "monitoring", "level": "info", "ts": "2026-09-29T10:12:45.067789Z"}
     ```
 - **Trace ID và span gây ảnh hưởng:**
-  - Trace ID tương ứng trên Langfuse Cloud: `bd91df34703408c8eee4a58dd33295c1` (chứa metadata `correlation_id: req-2e4afe66`).
+  - Trace ID tương ứng trên Langfuse Cloud: `2894f380a141bb94edc29b1482fa2f35` (chứa metadata `correlation_id: req-f49a0b74`).
   - Phân rã thời gian thực thi của các span (Span timing breakdown):
-    + Root span `lab-agent-run`: **2.656s** (100% thời gian agent)
-    + Child span `retrieval`: **2.501s** (chiếm tới **94.2%** tổng thời gian thực thi của trace!)
-    + Child span `llm-generation`: **0.152s** (chỉ chiếm 5.7%, tốc độ sinh token của LLM hoàn toàn bình thường)
+    + Root span `lab-agent-run`: **2.65s** (100% thời gian agent)
+    + Child span `retrieval`: **2.50s** (chiếm tới **94.3%** tổng thời gian thực thi của trace!)
+    + Child span `llm-generation`: **0.15s** (chỉ chiếm 5.7%, tốc độ sinh token của LLM hoàn toàn bình thường)
   - Span gây chậm trực tiếp chính là child span `retrieval` (bước tra cứu RAG vector/tài liệu).
 - **Root cause:**
   - Sự cố mô phỏng `rag_slow` đã can thiệp vào tầng tri thức/retriever, gây ra độ trễ nhân tạo 2.5 giây cho mỗi lần gọi hàm `retrieve()` đối với feature `monitoring`. Khi có tải đồng thời (5 concurrent requests), hàng đợi xử lý bị dồn ứ khiến độ trễ tổng thể từ phía client tăng vọt lên hơn 13 giây.
